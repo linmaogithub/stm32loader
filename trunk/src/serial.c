@@ -1,22 +1,36 @@
 /*
- * serial.c
- *
- *  Created on: Apr 29, 2013
- *      Author: jay
- */
 
-#include <stdio.h>   /* Standard input/output definitions */
-#include <string.h>  /* String function definitions */
-#include <unistd.h>  /* UNIX standard function definitions */
-#include <fcntl.h>   /* File control definitions */
-#include <errno.h>   /* Error number definitions */
-#include <termios.h> /* POSIX terminal control definitions */
+   stm32loader Open Source flash loader program for ST STM32 microcontrollers.
+   <konovalchukov.yakov@gmail.com>
+
+   Copyright 2013 Yakov Konovalchukov
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+*/
+
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <termios.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
 
 #include "serial.h"
 
-void print_array(uint8_t *buffer, int len){
+void hex_trace(const uint8_t *buffer, int len){
 	int i = 0;
 	for (i = 0; i < len; i++) {
 		if (buffer[i] < 0x10)
@@ -75,7 +89,7 @@ serial_errors_t serial_read(int fd, const void *buffer, int len){
 	}
 
 	printf("[%d] << ", plen);
-	print_array(buffer, plen);
+	hex_trace(buffer, plen);
 
 	return SERIAL_ERR_OK;
 }
@@ -99,7 +113,7 @@ serial_errors_t serial_write(int fd, const void *buffer, int len){
 	}
 
 	printf("\n[%d] >> ", plen);
-	print_array(buffer, plen);
+	hex_trace(buffer, plen);
 
 	return SERIAL_ERR_OK;
 }
