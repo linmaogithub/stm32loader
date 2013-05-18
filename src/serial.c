@@ -265,7 +265,6 @@ serial_errors_t serial_signal(int fd, serial_signals_t signal, int value){
 			return SERIAL_ERR_INVALIG_ARGUMENT;
 	}
 
-
 	int status;
 
 	ioctl(fd, TIOCMGET, &status);
