@@ -47,5 +47,9 @@ stm32_errors_t stm32_read(int fd, uint32_t start_address, uint8_t **data, uint16
 stm32_errors_t stm32_write(int fd, uint32_t start_address, const uint8_t *data, uint16_t data_size);
 stm32_errors_t stm32_extended_erase(int fd, const uint16_t *pages, uint16_t pages_size);
 stm32_errors_t stm32_extended_erase_special(int fd, stm32_erase_type_t erase_type);
+stm32_errors_t stm32_write_protect(int fd, const uint8_t *pages, uint16_t pages_size);
+stm32_errors_t stm32_write_unprotect(int fd);
+stm32_errors_t stm32_readout_protect(int fd);
+stm32_errors_t stm32_readout_unprotect(int fd);
 
 #endif /* STM32_H_ */
