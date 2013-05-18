@@ -33,14 +33,19 @@ typedef enum stm32_errors {
 	STM32_ERR_RDP,
 } stm32_errors_t ;
 
-stm32_errors_t stm32_init(int fd);
+typedef enum stm32_erase_type {
+	STM32_ERASE_MASS,
+	STM32_ERASE_BANK1,
+	STM32_ERASE_BANK2
+} stm32_erase_type_t ;
 
-stm32_errors_t stm32_get_bootloader_version(int fd, uint8_t *version);
-stm32_errors_t stm32_get_supported_commands(int fd, uint8_t *commands, int buffer_size, uint8_t *size);
+stm32_errors_t stm32_init(int fd);
+stm32_errors_t stm32_get(int fd, uint8_t *version, uint8_t **supported_commands, uint8_t *supported_commands_size);
 stm32_errors_t stm32_get_prs(int fd, uint8_t *rpdc, uint8_t *rpec);
-stm32_errors_t stm32_get_id(int fd, uint8_t *id, int buffer_size, uint8_t *size);
-stm32_errors_t stm32_read(int fd, const uint32_t start_address, void *data, const uint32_t data_size);
-stm32_errors_t stm32_write(int fd, const uint32_t start_address, void *data, const uint32_t data_size);
-stm32_errors_t stm32_extended_erase(int fd, const uint8_t *pages, const uint8_t buffer_size);
+stm32_errors_t stm32_get_id(int fd, uint8_t **device_id, uint8_t *device_id_size);
+stm32_errors_t stm32_read(int fd, uint32_t start_address, uint8_t **data, uint16_t data_size);
+stm32_errors_t stm32_write(int fd, uint32_t start_address, const uint8_t *data, uint16_t data_size);
+stm32_errors_t stm32_extended_erase(int fd, const uint16_t *pages, uint16_t pages_size);
+stm32_errors_t stm32_extended_erase_special(int fd, stm32_erase_type_t erase_type);
 
 #endif /* STM32_H_ */
