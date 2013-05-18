@@ -25,49 +25,51 @@
 #include "stm32.h"
 #include "serial.h"
 
-#define STM32_INIT		0x7F
-#define STM32_ACK		0x79
-#define STM32_NACK		0x1F
-#define STM32_GET		0x00
-#define STM32_GET_RPS	0x01
-#define STM32_GET_ID	0x02
-#define STM32_READ		0x11
-#define STM32_WRITE		0x31
-#define STM32_EXTENDED_ERASE		0x44
+#define STM32_INIT				(uint8_t)0x7F
+#define STM32_ACK				(uint8_t)0x79
+#define STM32_NACK				(uint8_t)0x1F
+#define STM32_GET				(uint8_t)0x00
+#define STM32_GET_RPS			(uint8_t)0x01
+#define STM32_GET_ID			(uint8_t)0x02
+#define STM32_READ				(uint8_t)0x11
+#define STM32_WRITE				(uint8_t)0x31
+#define STM32_EXTENDED_ERASE	(uint8_t)0x44
 
-#define READ_BLOCK_SIZE		0x100U
-#define WRITE_BLOCK_SIZE	0x100U
+#define STM32_EE_ERASE_MASS		(uint16_t)0xFFFF
+#define STM32_EE_ERASE_BANK1	(uint16_t)0xFFFE
+#define STM32_EE_ERASE_BANK2	(uint16_t)0xFFFD
 
 stm32_errors_t stm32_init(int fd) {
 
-	uint8_t cmd = STM32_INIT;
+	uint8_t buffer = STM32_INIT;
 
 	/* send 'init' command and wait ACK */
 	if (
-		serial_write(fd, &cmd, 1) != SERIAL_ERR_OK ||
-		serial_read(fd, &cmd, 1) != SERIAL_ERR_OK
+		serial_write(fd, &buffer, 1) != SERIAL_ERR_OK ||
+		serial_read(fd, &buffer, 1) != SERIAL_ERR_OK
 	)
 		return STM32_ERR_SERIAL;
 
-	if (cmd != STM32_ACK)
+	if (buffer != STM32_ACK)
 		return STM32_ERR_PROTOCOL;
 
 	return STM32_ERR_OK;
 }
 
-stm32_errors_t stm32_get_bootloader_version(int fd, uint8_t *version){
+stm32_errors_t stm32_get(int fd, uint8_t *version, uint8_t **supported_commands, uint8_t *supported_commands_size){
 
-	uint8_t cmd[2];
-	uint8_t buffer[255];
-	uint8_t len;
+	static uint8_t commands[0xFF];
+
+	uint8_t buffer[0xFF];
+	uint16_t len;
 
 	/* build 'get' command */
-	cmd[0] = STM32_GET;
-	cmd[1] = cmd[0] ^ 0xFF;
+	buffer[0] = STM32_GET;
+	buffer[1] = buffer[0] ^ 0xFF;
 
 	/* send 'get' command and wait ACK */
 	if(
-		serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
 		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
 	)
 		return STM32_ERR_SERIAL;
@@ -82,8 +84,7 @@ stm32_errors_t stm32_get_bootloader_version(int fd, uint8_t *version){
 	if (buffer[0] < 0)
 		return STM32_ERR_PROTOCOL;
 
-	len = buffer[0];
-	len += 1;
+	len = buffer[0] + 1;
 
 	/* read bootloader version */
 	if(serial_read(fd, version, 1) != SERIAL_ERR_OK)
@@ -92,63 +93,11 @@ stm32_errors_t stm32_get_bootloader_version(int fd, uint8_t *version){
 	len--;
 
 	/* read supported commands */
-	if(serial_read(fd, buffer, len) != SERIAL_ERR_OK)
-		return STM32_ERR_SERIAL;
-
-	/* read ACK */
-	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
-		return STM32_ERR_SERIAL;
-
-	if (buffer[0] != STM32_ACK)
-		return STM32_ERR_PROTOCOL;
-
-	return STM32_ERR_OK;
-}
-
-stm32_errors_t stm32_get_supported_commands(int fd, uint8_t *commands, int buffer_size, uint8_t *size){
-
-	uint8_t cmd[2];
-	uint8_t buffer[255];
-	uint8_t len;
-
-	/* build 'get' command */
-	cmd[0] = STM32_GET;
-	cmd[1] = cmd[0] ^ 0xFF;
-
-	/* send 'get' command and wait ACK */
-	if(
-		serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
-		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-	)
-		return STM32_ERR_SERIAL;
-
-	if (buffer[0] != STM32_ACK)
-		return STM32_ERR_PROTOCOL;
-
-	/* read size of response */
-	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
-		return STM32_ERR_SERIAL;
-
-	if (buffer[0] < 0)
-		return STM32_ERR_PROTOCOL;
-
-	len = buffer[0];
-	len += 1;
-
-	/* read bootloader version */
-	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
-		return STM32_ERR_SERIAL;
-
-	len--;
-
-	if (buffer_size < len)
-		return STM32_ERR_INVALID_ARGUMENT;
-
-	/* read supported commands */
 	if(serial_read(fd, commands, len) != SERIAL_ERR_OK)
 		return STM32_ERR_SERIAL;
 
-	*size = len;
+	*supported_commands = commands;
+	*supported_commands_size = len;
 
 	/* read ACK */
 	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
@@ -162,16 +111,15 @@ stm32_errors_t stm32_get_supported_commands(int fd, uint8_t *commands, int buffe
 
 stm32_errors_t stm32_get_prs(int fd, uint8_t *rpdc, uint8_t *rpec){
 
-	uint8_t cmd[2];
-	uint8_t buffer[255];
+	uint8_t buffer[0xFF];
 
 	/* build 'get prs' command */
-	cmd[0] = STM32_GET_RPS;
-	cmd[1] = cmd[0] ^ 0xFF;
+	buffer[0] = STM32_GET_RPS;
+	buffer[1] = buffer[0] ^ 0xFF;
 
 	/* send 'get prs' command and wait ACK */
 	if(
-		serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
 		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
 	)
 		return STM32_ERR_SERIAL;
@@ -201,19 +149,20 @@ stm32_errors_t stm32_get_prs(int fd, uint8_t *rpdc, uint8_t *rpec){
 	return STM32_ERR_OK;
 }
 
-stm32_errors_t stm32_get_id(int fd, uint8_t *id, int buffer_size, uint8_t *size){
+stm32_errors_t stm32_get_id(int fd, uint8_t **device_id, uint8_t *device_id_size){
 
-	uint8_t cmd[2];
-	uint8_t buffer[255];
+	static uint8_t id[0x100]; // 0xFF + 1
+
+	uint8_t buffer[0xFF];
 	uint8_t len;
 
 	/* build 'get id' command */
-	cmd[0] = STM32_GET_ID;
-	cmd[1] = cmd[0] ^ 0xFF;
+	buffer[0] = STM32_GET_ID;
+	buffer[1] = buffer[0] ^ 0xFF;
 
 	/* send 'get id' command and wait ACK */
 	if(
-		serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
 		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
 	)
 		return STM32_ERR_SERIAL;
@@ -230,14 +179,12 @@ stm32_errors_t stm32_get_id(int fd, uint8_t *id, int buffer_size, uint8_t *size)
 
 	len = buffer[0] + 1;
 
-	if (buffer_size < len)
-		return STM32_ERR_INVALID_ARGUMENT;
-
 	/* read device id */
 	if(serial_read(fd, id, len) != SERIAL_ERR_OK)
 		return STM32_ERR_SERIAL;
 
-	*size = len;
+	*device_id = id;
+	*device_id_size = len;
 
 	/* read ACK */
 	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
@@ -249,197 +196,22 @@ stm32_errors_t stm32_get_id(int fd, uint8_t *id, int buffer_size, uint8_t *size)
 	return STM32_ERR_OK;
 }
 
-stm32_errors_t stm32_read(int fd, const uint32_t start_address, void *data, const uint32_t data_size){
+stm32_errors_t stm32_read(int fd, uint32_t start_address, uint8_t **data, uint16_t data_size){
 
-	uint8_t cmd[2];
-	uint8_t buffer[255];
-	uint8_t *data_ptr = (uint8_t*)data;
-	uint16_t block_size;
-	uint32_t readed = 0;
+	static uint8_t response[0x100]; //0xFF + 1
 
-	/* build 'read memory' command */
-	cmd[0] = STM32_READ;
-	cmd[1] = cmd[0] ^ 0xFF;
+	uint8_t buffer[0xFF];
 
-	while(readed < data_size){
-
-		/* send 'read memory' command and wait ACK */
-		if(
-			serial_write(fd, &cmd, 2) != SERIAL_ERR_OK ||
-			serial_read(fd, &buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		/* check for Read Device Protection */
-		if (buffer[0] == STM32_NACK)
-			return STM32_ERR_RDP;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		/* build start address with checksum */
-		buffer[0] = ((start_address + readed) >> 24) & ~((~0) << 8);
-		buffer[1] = ((start_address + readed) >> 16) & ~((~0) << 8);
-		buffer[2] = ((start_address + readed) >> 8) & ~((~0) << 8);
-		buffer[3] = ((start_address + readed) >> 0) & ~((~0) << 8);
-
-		buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
-
-		/* send start address with checksum and wait ACK */
-		if(
-			serial_write(fd, buffer, 5) != SERIAL_ERR_OK ||
-			serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		/* check for bad address */
-		if (buffer[0] == STM32_NACK)
-			return STM32_ERR_INVALID_ARGUMENT;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		/* calculate block size and checksum */
-		if((data_size - readed) >= READ_BLOCK_SIZE)
-			block_size = READ_BLOCK_SIZE;
-		else
-			block_size = data_size - readed;
-
-		buffer[0] = block_size - 1;
-		buffer[1] = buffer[0] ^ 0xFF;
-
-		/* send block size with checksum */
-		if(
-			serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
-			serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		/* check for Read Device Protection */
-		if (buffer[0] == STM32_NACK)
-			return STM32_ERR_RDP;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		/* read data */
-		if(serial_read(fd, data_ptr + readed, block_size) != SERIAL_ERR_OK)
-			return STM32_ERR_SERIAL;
-
-		readed += block_size;
-	}
-
-	return STM32_ERR_OK;
-}
-
-stm32_errors_t stm32_write(int fd, const uint32_t start_address, void *data, const uint32_t data_size){
-
-	uint8_t cmd[2];
-	uint8_t buffer[512];
-	uint8_t *data_ptr = (uint8_t*)data;
-	uint16_t block_size;
-	uint32_t writed = 0;
-	uint8_t check_summ;
-
-	/* build 'write memory' command */
-	cmd[0] = STM32_WRITE;
-	cmd[1] = cmd[0] ^ 0xFF;
-
-	while(writed < data_size){
-
-		/* check for align */
-		if((start_address + writed) % 4 != 0)
-			return STM32_ERR_INVALID_ARGUMENT;
-
-		/* send 'write memory' command and wait ACK */
-		if(
-			serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
-			serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		/* check for Read Device Protection */
-		if (buffer[0] == STM32_NACK)
-			return STM32_ERR_RDP;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		/* build start address with checksum */
-		buffer[0] = ((start_address + writed) >> 24) & ~((~0) << 8);
-		buffer[1] = ((start_address + writed) >> 16) & ~((~0) << 8);
-		buffer[2] = ((start_address + writed) >> 8) & ~((~0) << 8);
-		buffer[3] = ((start_address + writed) >> 0) & ~((~0) << 8);
-
-		buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
-
-		/* send start address with checksum and wait ACK */
-		if(
-			serial_write(fd, buffer, 5) != SERIAL_ERR_OK ||
-			serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		/* check for bad address */
-		if (buffer[0] == STM32_NACK)
-			return STM32_ERR_INVALID_ARGUMENT;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		/* calculate block size and checksum */
-		if((data_size - writed) >= WRITE_BLOCK_SIZE)
-			block_size = WRITE_BLOCK_SIZE;
-		else
-			block_size = data_size - writed;
-
-		buffer[0] = block_size - 1;
-		buffer[1] = buffer[0] ^ 0xFF;
-
-		int i = 0;
-		check_summ = buffer[0];
-
-		for(i = 0; i < block_size; i++){
-			buffer[i + 1] = data_ptr[writed + i];
-			check_summ ^= buffer[i + 1];
-		}
-		buffer[i + 1] = check_summ;
-
-		/* send data */
-		if(
-			serial_write(fd, buffer, block_size + 2) != SERIAL_ERR_OK ||
-			serial_read(fd, buffer, 1) != SERIAL_ERR_OK
-		)
-			return STM32_ERR_SERIAL;
-
-		if (buffer[0] != STM32_ACK)
-			return STM32_ERR_PROTOCOL;
-
-		writed += block_size;
-
-	}
-
-	return STM32_ERR_OK;
-
-}
-
-stm32_errors_t stm32_extended_erase(int fd, const uint8_t *pages, const uint8_t buffer_size){
-
-	uint8_t cmd[2];
-	uint8_t buffer[512];
-	uint8_t check_summ;
-
-	/* check for special value */
-	if(buffer_size == 0xFF)
+	if(data_size == 0 || data_size > 0x100)	//0xFF + 1
 		return STM32_ERR_INVALID_ARGUMENT;
 
-	/* build 'extended erase memory' command */
-	cmd[0] = STM32_EXTENDED_ERASE;
-	cmd[1] = cmd[0] ^ 0xFF;
+	/* build 'read memory' command */
+	buffer[0] = STM32_READ;
+	buffer[1] = buffer[0] ^ 0xFF;
 
-	/* send 'erase memory' command and wait ACK */
+	/* send 'read memory' command and wait ACK */
 	if(
-		serial_write(fd, cmd, 2) != SERIAL_ERR_OK ||
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
 		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
 	)
 		return STM32_ERR_SERIAL;
@@ -451,20 +223,250 @@ stm32_errors_t stm32_extended_erase(int fd, const uint8_t *pages, const uint8_t 
 	if (buffer[0] != STM32_ACK)
 		return STM32_ERR_PROTOCOL;
 
-	buffer[0] = buffer_size;
+	/* build start address with checksum */
+	buffer[0] = (start_address >> 24) & 0xFF;
+	buffer[1] = (start_address >> 16) & 0xFF;
+	buffer[2] = (start_address >> 8) & 0xFF;
+	buffer[3] = (start_address >> 0) & 0xFF;
+
+	buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
+
+	/* send start address with checksum and wait ACK */
+	if(
+		serial_write(fd, buffer, 5) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for bad address */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* calculate block size and checksum */
+	buffer[0] = data_size - 1;
+	buffer[1] = buffer[0] ^ 0xFF;
+
+	/* send block size with checksum */
+	if(
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for Read Device Protection */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_RDP;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* read data */
+	if(serial_read(fd, response, data_size) != SERIAL_ERR_OK)
+		return STM32_ERR_SERIAL;
+
+	*data = response;
+
+	return STM32_ERR_OK;
+}
+
+stm32_errors_t stm32_write(int fd, uint32_t start_address, const uint8_t *data, uint16_t data_size){
+
+	uint8_t buffer[0x200];
+	uint8_t check_summ;
+
+	if(data_size == 0 || data_size > 0x100)	//0xFF + 1
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	/* check for align */
+	if((start_address % 4) != 0)
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	/* build 'write memory' command */
+	buffer[0] = STM32_WRITE;
+	buffer[1] = buffer[0] ^ 0xFF;
+
+	/* send 'write memory' command and wait ACK */
+	if(
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for Read Device Protection */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_RDP;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* build start address with checksum */
+	buffer[0] = (start_address >> 24) & 0xFF;
+	buffer[1] = (start_address >> 16) & 0xFF;
+	buffer[2] = (start_address >> 8) & 0xFF;
+	buffer[3] = (start_address >> 0) & 0xFF;
+
+	buffer[4] = buffer[0] ^ buffer[1] ^ buffer[2] ^ buffer[3];
+
+	/* send start address with checksum and wait ACK */
+	if(
+		serial_write(fd, buffer, 5) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for bad address */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* calculate block size and checksum */
+	buffer[0] = data_size - 1;
 
 	int i = 0;
 	check_summ = buffer[0];
 
-	for(i = 0; i < buffer_size; i++){
-		buffer[i + 1] = pages[i];
-		check_summ ^= buffer[i + 1];
+	for(i = 0; i < data_size; i++){
+		buffer[i + 1] = data[i];
+		check_summ ^= data[i];
 	}
 	buffer[i + 1] = check_summ;
 
-	/* read ACK */
-	if(serial_read(fd, buffer, 1) != SERIAL_ERR_OK)
+	/* send data */
+	if(
+		serial_write(fd, buffer, data_size + 2) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
 		return STM32_ERR_SERIAL;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	return STM32_ERR_OK;
+
+}
+
+stm32_errors_t stm32_extended_erase(int fd, const uint16_t *pages, uint16_t pages_size){
+
+	uint8_t buffer[0xFF];
+	uint8_t check_summ;
+
+	if(pages_size == 0)
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	/* check for special commands */
+	if(pages_size - 1 == STM32_EE_ERASE_MASS || pages_size - 1 == STM32_EE_ERASE_BANK1 || pages_size - 1 == STM32_EE_ERASE_BANK2)
+		return STM32_ERR_INVALID_ARGUMENT;
+
+	/* build 'extended erase memory' command */
+	buffer[0] = STM32_EXTENDED_ERASE;
+	buffer[1] = buffer[0] ^ 0xFF;
+
+	/* send 'extended erase memory' command and wait ACK */
+	if(
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for Read Device Protection */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_RDP;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* send number of pages to be erased */
+	buffer[0] = ((pages_size - 1) >> 8) & 0xFF;
+	buffer[1] = ((pages_size - 1) >> 0) & 0xFF;
+
+	check_summ = buffer[0];
+	check_summ ^= buffer[1];
+
+	if(serial_write(fd, buffer, 2) != SERIAL_ERR_OK)
+		return STM32_ERR_SERIAL;
+
+	uint16_t i = 0;
+
+	/* send pages number */
+	for(i = 0; i < pages_size; i++){
+
+		buffer[0] = (pages[i] >> 8) & ~((~0) << 8);
+		buffer[1] = (pages[i] >> 0) & ~((~0) << 8);
+
+		check_summ ^= buffer[0];
+		check_summ ^= buffer[1];
+
+		if(serial_write(fd, buffer, 2) != SERIAL_ERR_OK)
+			return STM32_ERR_SERIAL;
+
+	}
+
+	/* send check sum */
+	if(serial_write(fd, &check_summ, 1) != SERIAL_ERR_OK)
+		return STM32_ERR_SERIAL;
+
+	/* wait ACK */
+	while(serial_read(fd, buffer, 1) != SERIAL_ERR_OK);
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	return STM32_ERR_OK;
+}
+
+stm32_errors_t stm32_extended_erase_special(int fd, stm32_erase_type_t erase_type){
+
+	uint8_t buffer[0xFF];
+	uint8_t check_summ;
+	uint16_t cmd;
+
+	switch (erase_type) {
+		case STM32_ERASE_MASS: cmd = STM32_EE_ERASE_MASS; break;
+		case STM32_ERASE_BANK1: cmd = STM32_EE_ERASE_BANK1; break;
+		case STM32_ERASE_BANK2: cmd = STM32_EE_ERASE_BANK2; break;
+		default:
+			return STM32_ERR_INVALID_ARGUMENT;
+	}
+
+	/* build 'extended erase memory' command */
+	buffer[0] = STM32_EXTENDED_ERASE;
+	buffer[1] = buffer[0] ^ 0xFF;
+
+	/* send 'extended erase memory' command and wait ACK */
+	if(
+		serial_write(fd, buffer, 2) != SERIAL_ERR_OK ||
+		serial_read(fd, buffer, 1) != SERIAL_ERR_OK
+	)
+		return STM32_ERR_SERIAL;
+
+	/* check for Read Device Protection */
+	if (buffer[0] == STM32_NACK)
+		return STM32_ERR_RDP;
+
+	if (buffer[0] != STM32_ACK)
+		return STM32_ERR_PROTOCOL;
+
+	/* send special erase command */
+	buffer[0] = (cmd >> 8) & 0xFF;
+	buffer[1] = (cmd >> 0) & 0xFF;
+
+	check_summ = buffer[0];
+	check_summ ^= buffer[1];
+
+	if(serial_write(fd, buffer, 2) != SERIAL_ERR_OK)
+		return STM32_ERR_SERIAL;
+
+	/* send check sum */
+	if(serial_write(fd, &check_summ, 1) != SERIAL_ERR_OK)
+		return STM32_ERR_SERIAL;
+
+	/* wait ACK or NACK */
+	while(serial_read(fd, buffer, 1) != SERIAL_ERR_OK);
 
 	if (buffer[0] != STM32_ACK)
 		return STM32_ERR_PROTOCOL;
